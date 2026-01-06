@@ -5,10 +5,156 @@
   <Color x:Key="AccentColor">#0F62FE</Color>
   <Color x:Key="TextPrimary">#0F1724</Color>
   <Color x:Key="TextSecondary">#475569</Color>
+  <Color x:Key="BorderColor">#E2E8F0</Color>
+  <Color x:Key="HoverColor">#F1F5F9</Color>
+  <Color x:Key="PressedColor">#CBD5E1</Color>
+  <Color x:Key="FocusColor">#0F62FE</Color>
+  <Color x:Key="DisabledColor">#94A3B8</Color>
 
   <SolidColorBrush x:Key="BgBrush" Color="{StaticResource BgColor}" />
   <SolidColorBrush x:Key="PanelBrush" Color="{StaticResource PanelColor}" />
   <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}" />
   <SolidColorBrush x:Key="TextPrimaryBrush" Color="{StaticResource TextPrimary}" />
   <SolidColorBrush x:Key="TextSecondaryBrush" Color="{StaticResource TextSecondary}" />
+  <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}" />
+  <SolidColorBrush x:Key="HoverBrush" Color="{StaticResource HoverColor}" />
+  <SolidColorBrush x:Key="PressedBrush" Color="{StaticResource PressedColor}" />
+  <SolidColorBrush x:Key="FocusBrush" Color="{StaticResource FocusColor}" />
+  <SolidColorBrush x:Key="DisabledBrush" Color="{StaticResource DisabledColor}" />
+
+  <Style x:Key="ModernButton" TargetType="Button">
+    <Setter Property="Background" Value="{StaticResource PanelBrush}" />
+    <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+    <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="Padding" Value="12,6" />
+    <Setter Property="Margin" Value="4" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="RenderTransformOrigin" Value="0.5,0.5" />
+    <Setter Property="RenderTransform">
+      <Setter.Value>
+        <ScaleTransform ScaleX="1" ScaleY="1" />
+      </Setter.Value>
+    </Setter>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="border" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="8,2"/>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="border" Property="Background" Value="{StaticResource HoverBrush}" />
+              <Setter TargetName="border" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+              <Setter Property="RenderTransform">
+                <Setter.Value>
+                  <ScaleTransform ScaleX="1.02" ScaleY="1.02" />
+                </Setter.Value>
+              </Setter>
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+              <Setter TargetName="border" Property="Background" Value="{StaticResource PressedBrush}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter TargetName="border" Property="Background" Value="{StaticResource DisabledBrush}" />
+              <Setter TargetName="border" Property="Opacity" Value="0.6" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="ModernTextBox" TargetType="TextBox">
+    <Setter Property="Background" Value="{StaticResource PanelBrush}" />
+    <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+    <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="Padding" Value="8,6" />
+    <Setter Property="Margin" Value="4" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="TextBox">
+          <Border x:Name="border" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6" Padding="2">
+            <ScrollViewer x:Name="PART_ContentHost" />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="border" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+            </Trigger>
+            <Trigger Property="IsFocused" Value="True">
+              <Setter TargetName="border" Property="BorderBrush" Value="{StaticResource FocusBrush}" />
+              <Setter TargetName="border" Property="Effect">
+                <Setter.Value>
+                  <DropShadowEffect Color="{StaticResource FocusColor}" ShadowDepth="0" BlurRadius="6" Opacity="0.25" />
+                </Setter.Value>
+              </Setter>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="ModernListBox" TargetType="ListBox">
+    <Setter Property="Background" Value="{StaticResource PanelBrush}" />
+    <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="Margin" Value="4" />
+    <Setter Property="Padding" Value="2" />
+    <Setter Property="ItemContainerStyle">
+      <Setter.Value>
+        <Style TargetType="ListBoxItem">
+          <Setter Property="Padding" Value="8,6" />
+          <Setter Property="Margin" Value="2" />
+          <Setter Property="Template">
+            <Setter.Value>
+              <ControlTemplate TargetType="ListBoxItem">
+                <Border x:Name="border" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="4">
+                  <ContentPresenter />
+                </Border>
+                <ControlTemplate.Triggers>
+                  <Trigger Property="IsSelected" Value="True">
+                    <Setter TargetName="border" Property="Background" Value="{StaticResource AccentBrush}" />
+                    <Setter TargetName="border" Property="BorderBrush" Value="{StaticResource FocusBrush}" />
+                    <Setter Property="Foreground" Value="White"/>
+                  </Trigger>
+                  <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="border" Property="Background" Value="{StaticResource HoverBrush}" />
+                  </Trigger>
+                </ControlTemplate.Triggers>
+              </ControlTemplate>
+            </Setter.Value>
+          </Setter>
+        </Style>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="ModernComboBox" TargetType="ComboBox" BasedOn="{StaticResource ModernTextBox}" />
+  <Style x:Key="ModernCheckBox" TargetType="CheckBox" />
+  <Style x:Key="ModernLabel" TargetType="Label" />
+  <Style x:Key="ModernTextBlock" TargetType="TextBlock" />
+  <Style x:Key="ModernToolBar" TargetType="ToolBar" />
+  <Style x:Key="ModernStatusBar" TargetType="StatusBar" />
+  <Style x:Key="ModernBorder" TargetType="Border" />
+  <Style x:Key="ModernScrollViewer" TargetType="ScrollViewer" />
+  <Style x:Key="ModernMenu" TargetType="Menu" />
+  <Style x:Key="ModernMenuItem" TargetType="MenuItem" />
+  <Style x:Key="ModernContextMenu" TargetType="ContextMenu" />
+
+  <Storyboard x:Key="FadeInStoryboard">
+    <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0" To="1" Duration="0:0:0.3" />
+  </Storyboard>
+
+  <Storyboard x:Key="SlideInStoryboard">
+    <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)" From="-50" To="0" Duration="0:0:0.4">
+      <DoubleAnimation.EasingFunction>
+        <CubicEase EasingMode="EaseOut" />
+      </DoubleAnimation.EasingFunction>
+    </DoubleAnimation>
+    <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0" To="1" Duration="0:0:0.4" />
+  </Storyboard>
+
+  <DropShadowEffect x:Key="ShadowEffect" Color="{StaticResource BorderColor}" ShadowDepth="2" BlurRadius="8" Opacity="0.15" />
 </ResourceDictionary>
