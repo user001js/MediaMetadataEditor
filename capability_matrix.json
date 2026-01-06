@@ -1,0 +1,9 @@
+{
+  "version": "1.0",
+  "formats": {
+    "mp4": { "SupportsTitle": "true", "SupportsComment": "true", "SupportsDirector": "conditional", "SupportsAuthorUrl": "conditional" },
+    "mkv": { "SupportsTitle": "true", "SupportsComment": "true", "SupportsDirector": "conditional" },
+    "mov": { "SupportsTitle": "true", "SupportsComment": "true", "SupportsDirector": "conditional" },
+    "wmv": { "SupportsTitle": "true", "SupportsComment": "true", "SupportsDirector": "unsupported" }
+  }
+}
