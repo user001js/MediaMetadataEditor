@@ -2,98 +2,65 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
+using System.Text.Json;
 using System.Diagnostics;
-using MediaMetadataEditor.Core;
-
-using TFile = TagLib.File;
+using System.Threading.Tasks;
+using TagFile = TagLib.File;
 
 namespace MediaMetadataEditor.Core
 {
     public static class SettingsSvc
     {
-        public static readonly string[] SupportedExtensions = new[] { ".mp4", ".m4v", ".mov", ".wmv", ".mkv", ".avi" };
-        public static bool CreateBackup { get; private set; } = true;
-        public static int MaxBatchDefault { get; private set; } = 50;
-        public static string AtomicParsleyPath { get; private set; } = "AtomicParsley";
-        public static string ExifToolPath { get; private set; } = "exiftool";
-        public static string MediaInfoPath { get; private set; } = "mediainfo";
-
-        static SettingsSvc()
-        {
-            try
-            {
-                var baseDir = AppDomain.CurrentDomain.BaseDirectory ?? Environment.CurrentDirectory;
-                var cfg = Path.Combine(baseDir, "appsettings.json");
-                if (File.Exists(cfg))
-                {
-                    var j = JObject.Parse(File.ReadAllText(cfg));
-                    var b = j["Behavior"];
-                    if (b != null)
-                    {
-                        CreateBackup = b.Value<bool?>("CreateBackup") ?? CreateBackup;
-                        MaxBatchDefault = b.Value<int?>("MaxBatchDefault") ?? MaxBatchDefault;
-                    }
-                    var t = j["ExternalTools"];
-                    if (t != null)
-                    {
-                        AtomicParsleyPath = t.Value<string?>("AtomicParsleyPath") ?? AtomicParsleyPath;
-                        ExifToolPath = t.Value<string?>("ExifToolPath") ?? ExifToolPath;
-                        MediaInfoPath = t.Value<string?>("MediaInfoPath") ?? MediaInfoPath;
-                    }
-                }
-            }
-            catch { /* keep defaults */ }
-        }
+        public static readonly string[] SupportedExtensions = new[] { ".mp4", ".m4v", ".mov", ".wmv", ".mkv", ".avi", ".flv" };
+        public static bool CreateBackup { get; set; } = false;
+        public static string AppFolder => AppDomain.CurrentDomain.BaseDirectory ?? Environment.CurrentDirectory;
+        public static string OperationsLog => Path.Combine(AppFolder, "operations_log.jsonl");
+        public static int ExternalToolTimeoutMs { get; set; } = 7000;
     }
 
     public static class PresetSvc
     {
-        private static readonly string FilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory ?? Environment.CurrentDirectory, "presets.json");
-        private static readonly object locker = new();
-
+        private static string PresetFile => Path.Combine(SettingsSvc.AppFolder, "presets.json");
         public static IEnumerable<Preset> GetAll()
         {
             try
             {
-                lock (locker)
-                {
-                    if (!File.Exists(FilePath)) return Enumerable.Empty<Preset>();
-                    var txt = File.ReadAllText(FilePath);
-                    if (string.IsNullOrWhiteSpace(txt)) return Enumerable.Empty<Preset>();
-                    return JsonConvert.DeserializeObject<List<Preset>>(txt) ?? Enumerable.Empty<Preset>();
-                }
+                if (!File.Exists(PresetFile)) return Enumerable.Empty<Preset>();
+                var txt = File.ReadAllText(PresetFile);
+                return JsonSerializer.Deserialize<List<Preset>>(txt) ?? Enumerable.Empty<Preset>();
             }
             catch { return Enumerable.Empty<Preset>(); }
         }
 
         public static void AddOrReplace(Preset p)
         {
-            try
-            {
-                lock (locker)
-                {
-                    var list = GetAll().ToList();
-                    var ex = list.FirstOrDefault(x => string.Equals(x.Name, p.Name, StringComparison.OrdinalIgnoreCase));
-                    if (ex != null) list.Remove(ex);
-                    list.Add(p);
-                    File.WriteAllText(FilePath, JsonConvert.SerializeObject(list, Formatting.Indented));
-                }
-            }
-            catch { }
+            var all = GetAll().ToList();
+            var idx = all.FindIndex(x => string.Equals(x.Name, p.Name, StringComparison.OrdinalIgnoreCase));
+            if (idx >= 0) all[idx] = p; else all.Add(p);
+            File.WriteAllText(PresetFile, JsonSerializer.Serialize(all, new JsonSerializerOptions { WriteIndented = true }));
         }
 
         public static void Remove(string name)
         {
+            var all = GetAll().Where(x => !string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase)).ToList();
+            File.WriteAllText(PresetFile, JsonSerializer.Serialize(all, new JsonSerializerOptions { WriteIndented = true }));
+        }
+    }
+
+    public static class LoggerSvc
+    {
+        private static readonly object lockObj = new();
+        public static async Task AppendOperationAsync(object entry)
+        {
             try
             {
-                lock (locker)
+                var path = SettingsSvc.OperationsLog;
+                var json = JsonSerializer.Serialize(entry, new JsonSerializerOptions { WriteIndented = false });
+                lock (lockObj)
                 {
-                    var list = GetAll().ToList();
-                    var ex = list.FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
-                    if (ex != null) { list.Remove(ex); File.WriteAllText(FilePath, JsonConvert.SerializeObject(list, Formatting.Indented)); }
+                    File.AppendAllText(path, json + Environment.NewLine);
                 }
+                await Task.CompletedTask;
             }
             catch { }
         }
@@ -101,30 +68,28 @@ namespace MediaMetadataEditor.Core
 
     public static class TagLibSvc
     {
-        public static Dictionary<string, string> ReadTags(string path)
+        public static TagFile? SafeOpen(string path)
         {
-            var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            try
-            {
-                using var f = TFile.Create(path);
-                var t = f.Tag;
-                if (t != null)
-                {
-                    if (!string.IsNullOrEmpty(t.Title)) d["Title"] = t.Title;
-                    if (!string.IsNullOrEmpty(t.Comment)) d["Comment"] = t.Comment;
-                    if (t.Performers?.Length > 0) d["Artist"] = string.Join(";", t.Performers);
-                    if (t.Genres?.Length > 0) d["Genre"] = string.Join(";", t.Genres);
-                    if (t.Year != 0) d["Year"] = t.Year.ToString();
-                    if (!string.IsNullOrEmpty(t.Copyright)) d["Copyright"] = t.Copyright;
-                }
-            }
-            catch { /* best-effort */ }
-            return d;
+            try { return TagFile.Create(path); } catch { return null; }
         }
 
-        public static TFile? SafeOpen(string path)
+        public static Dictionary<string, string> ReadTags(string path)
         {
-            try { return TFile.Create(path); } catch { return null; }
+            var ret = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                using var tf = SafeOpen(path);
+                if (tf == null) return ret;
+                var tag = tf.Tag;
+                ret["Title"] = tag.Title ?? "";
+                ret["Comment"] = tag.Comment ?? "";
+                ret["Artist"] = string.Join(", ", tag.Performers ?? Array.Empty<string>());
+                ret["Genre"] = string.Join(", ", tag.Genres ?? Array.Empty<string>());
+                ret["Year"] = tag.Year != 0 ? tag.Year.ToString() : "";
+                ret["Copyright"] = tag.Copyright ?? "";
+            }
+            catch { }
+            return ret;
         }
 
         public static bool TryWriteBasic(string path, IDictionary<string, string> values, out string message)
@@ -132,119 +97,97 @@ namespace MediaMetadataEditor.Core
             message = "";
             try
             {
-                using var f = TFile.Create(path);
-                var t = f.Tag;
-                if (t == null) { message = "Cannot open tag"; return false; }
-
-                if (values.TryGetValue("Title", out var title)) t.Title = title;
-                if (values.TryGetValue("Comment", out var comment)) t.Comment = comment;
-                if (values.TryGetValue("Artist", out var artist)) t.Performers = new[] { artist };
-                if (values.TryGetValue("Genre", out var genre)) t.Genres = new[] { genre };
-                if (values.TryGetValue("Year", out var year) && uint.TryParse(year, out var y)) t.Year = y;
-                if (values.TryGetValue("Copyright", out var c)) t.Copyright = c;
-
-                f.Save();
+                using var tf = SafeOpen(path);
+                if (tf == null) { message = "Não foi possível abrir o arquivo para escrita."; return false; }
+                var tag = tf.Tag;
+                if (values.TryGetValue("Title", out var title)) tag.Title = title ?? "";
+                if (values.TryGetValue("Comment", out var comment)) tag.Comment = comment ?? "";
+                if (values.TryGetValue("Artist", out var artist)) tag.Performers = (string.IsNullOrWhiteSpace(artist) ? Array.Empty<string>() : new[] { artist });
+                if (values.TryGetValue("Genre", out var genre)) tag.Genres = (string.IsNullOrWhiteSpace(genre) ? Array.Empty<string>() : new[] { genre });
+                if (values.TryGetValue("Year", out var year) && uint.TryParse(year, out var y)) tag.Year = y;
+                tf.Save();
+                message = "OK";
                 return true;
             }
             catch (Exception ex) { message = ex.Message; return false; }
         }
     }
 
-    public static class ExternalToolsSvc
-    {
-        static ProcessStartInfo CreateInfo(string exe, string args) => new ProcessStartInfo { FileName = exe, Arguments = args, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
-
-        public static (bool Success, string Error) TryWriteWithAtomicParsley(string path, string field, string value)
-        {
-            try
-            {
-                var exe = SettingsSvc.AtomicParsleyPath;
-                if (string.IsNullOrEmpty(exe)) return (false, "AtomicParsley not configured");
-                string? args = field.ToLowerInvariant() switch
-                {
-                    "title" => $"\"{path}\" --title \"{Escape(value)}\" --overWrite",
-                    "comment" => $"\"{path}\" --comment \"{Escape(value)}\" --overWrite",
-                    _ => null
-                };
-                if (args == null) return (false, "Field not supported");
-                using var p = Process.Start(CreateInfo(exe, args)) ?? throw new Exception("AtomicParsley failed");
-                p.WaitForExit(15000);
-                var err = p.StandardError.ReadToEnd();
-                if (p.ExitCode != 0) return (false, string.IsNullOrEmpty(err) ? $"Exit {p.ExitCode}" : err);
-                return (true, "");
-            }
-            catch (Exception ex) { return (false, ex.Message); }
-        }
-
-        public static (bool Success, string Error) TryWriteWithExifTool(string path, string field, string value)
-        {
-            try
-            {
-                var exe = SettingsSvc.ExifToolPath;
-                if (string.IsNullOrEmpty(exe)) return (false, "ExifTool not configured");
-                string? tag = field.ToLowerInvariant() switch
-                {
-                    "title" => $"-Title={Escape(value)}",
-                    "comment" => $"-Comment={Escape(value)}",
-                    "director" => $"-Director={Escape(value)}",
-                    _ => null
-                };
-                if (tag == null) return (false, "Field not mapped");
-                var args = $"-overwrite_original {tag} \"{path}\"";
-                using var p = Process.Start(CreateInfo(exe, args)) ?? throw new Exception("exiftool failed");
-                p.WaitForExit(20000);
-                var err = p.StandardError.ReadToEnd();
-                if (p.ExitCode != 0) return (false, string.IsNullOrEmpty(err) ? $"Exit {p.ExitCode}" : err);
-                return (true, "");
-            }
-            catch (Exception ex) { return (false, ex.Message); }
-        }
-
-        private static string Escape(string s) => s?.Replace("\"", "\\\"") ?? string.Empty;
-    }
-
     public static class CapabilitySvc
     {
-        private static readonly string MatrixFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory ?? Environment.CurrentDirectory, "capability_matrix.json");
-        private static JObject? matrix = null;
+        private static readonly Dictionary<string, Dictionary<string, string>> _matrix = LoadMatrix();
 
-        static CapabilitySvc() => LoadMatrix();
-
-        private static void LoadMatrix()
+        private static Dictionary<string, Dictionary<string, string>> LoadMatrix()
         {
             try
             {
-                if (File.Exists(MatrixFile))
+                var path = Path.Combine(SettingsSvc.AppFolder, "capability_matrix.json");
+                if (!File.Exists(path))
                 {
-                    var txt = File.ReadAllText(MatrixFile);
-                    if (!string.IsNullOrWhiteSpace(txt)) matrix = JObject.Parse(txt);
+                    return new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [".mp4"] = new() { ["Title"] = "Supported", ["Comment"] = "Supported", ["Artist"] = "Supported", ["Genre"] = "Supported", ["Year"] = "Supported", ["AuthorUrl"] = "Conditional" },
+                        [".mkv"] = new() { ["Title"] = "Supported", ["Comment"] = "Supported", ["Artist"] = "Partial", ["Genre"] = "Partial", ["Year"] = "Unsupported" },
+                    };
                 }
-                else matrix = null;
+                var txt = File.ReadAllText(path);
+                var doc = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(txt);
+                return doc ?? new();
             }
-            catch { matrix = null; }
+            catch { return new(); }
         }
 
-        public static void ReloadIfPossible() => LoadMatrix();
-
-        public static CapabilitySupport GetSupport(string ext, string field)
+        public static CapabilitySupport GetSupport(string extension, string field)
         {
             try
             {
-                if (matrix == null) return CapabilitySupport.Unknown;
-                var key = (ext ?? string.Empty).TrimStart('.').ToLowerInvariant();
-                var formats = matrix["formats"] as JObject;
-                if (formats == null) return CapabilitySupport.Unknown;
-                var node = formats[key] as JObject;
-                if (node == null) return CapabilitySupport.Unknown;
-                var propName = $"Supports{field}";
-                var token = node[propName];
-                if (token == null) return CapabilitySupport.Unknown;
-                var val = token.ToString() ?? string.Empty;
-                return val.Equals("true", StringComparison.OrdinalIgnoreCase) ? CapabilitySupport.Supported :
-                       val.Equals("unsupported", StringComparison.OrdinalIgnoreCase) ? CapabilitySupport.Unsupported :
-                       CapabilitySupport.Conditional;
+                if (string.IsNullOrEmpty(extension)) return CapabilitySupport.Unsupported;
+                if (!_matrix.TryGetValue(extension.ToLowerInvariant(), out var fieldMap)) return CapabilitySupport.Unsupported;
+                if (!fieldMap.TryGetValue(field, out var val)) return CapabilitySupport.Unsupported;
+                return val switch
+                {
+                    "Supported" => CapabilitySupport.Supported,
+                    "Partial" => CapabilitySupport.Partial,
+                    "Conditional" => CapabilitySupport.Partial,
+                    _ => CapabilitySupport.Unsupported
+                };
             }
-            catch { return CapabilitySupport.Unknown; }
+            catch { return CapabilitySupport.Unsupported; }
+        }
+    }
+
+    public static class ExternalToolsSvc
+    {
+        public static (bool Success, string Error) TryWriteWithAtomicParsley(string file, string key, string value)
+        {
+            try
+            {
+                var exe = "AtomicParsley";
+                var args = $"\"{file}\" --{key} \"{value}\" --overWrite";
+                var psi = new ProcessStartInfo { FileName = exe, Arguments = args, UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
+                using var p = Process.Start(psi);
+                if (p == null) return (false, "Falha ao iniciar AtomicParsley");
+                if (!p.WaitForExit(SettingsSvc.ExternalToolTimeoutMs)) { try { p.Kill(); } catch { } return (false, "Timeout AtomicParsley"); }
+                var err = p.StandardError.ReadToEnd();
+                return (p.ExitCode == 0, err);
+            }
+            catch (Exception ex) { return (false, ex.Message); }
+        }
+
+        public static (bool Success, string Error) TryWriteWithExifTool(string file, string key, string value)
+        {
+            try
+            {
+                var exe = "exiftool";
+                var args = $"-{key}=\"{value}\" \"{file}\" -overwrite_original";
+                var psi = new ProcessStartInfo { FileName = exe, Arguments = args, UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
+                using var p = Process.Start(psi);
+                if (p == null) return (false, "Falha ao iniciar exiftool");
+                if (!p.WaitForExit(SettingsSvc.ExternalToolTimeoutMs)) { try { p.Kill(); } catch { } return (false, "Timeout exiftool"); }
+                var err = p.StandardError.ReadToEnd();
+                return (p.ExitCode == 0, err);
+            }
+            catch (Exception ex) { return (false, ex.Message); }
         }
     }
 }
