@@ -5,7 +5,7 @@ namespace MediaMetadataEditor.Views
     public partial class PromptWindow : Window
     {
         public string? Result { get; private set; }
-        public PromptWindow(string message, string title = "Input", string defaultValue = "")
+        public PromptWindow(string message, string title = "Entrada", string defaultValue = "")
         {
             InitializeComponent();
             Title = title;
