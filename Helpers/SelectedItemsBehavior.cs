@@ -1,4 +1,3 @@
-//SelectedItemsBehavior.cs
 using System.Collections;
 using System.Collections.Specialized;
 using System.Windows;
