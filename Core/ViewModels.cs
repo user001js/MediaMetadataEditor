@@ -1,4 +1,3 @@
-// Core/ViewModels.cs
 using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -13,10 +12,10 @@ using System.Windows;
 using Microsoft.Win32;
 using System.Collections.Generic;
 using System.Diagnostics;
+using MediaMetadataEditor.Helpers;
 
 namespace MediaMetadataEditor.Core
 {
-    // base viewmodel helper
     public class ObservableObject : INotifyPropertyChanged
     {
         public event PropertyChangedEventHandler? PropertyChanged;
@@ -39,7 +38,6 @@ namespace MediaMetadataEditor.Core
         public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    // File item + FieldVM
     public class FileItem
     {
         public string FullPath { get; init; } = "";
@@ -58,16 +56,14 @@ namespace MediaMetadataEditor.Core
         public string Tooltip { get; set; } = "";
     }
 
-    // MainViewModel (consolidated, defensive)
     public class MainViewModel : ObservableObject
     {
         public ObservableCollection<FileItem> Files { get; } = new();
-        public ObservableCollection<FileItem> SelectedFiles { get; } = new();
+        public ObservableCollection<object> SelectedFiles { get; } = new();
         public ObservableCollection<Preset> Presets { get; } = new();
         public Preset? SelectedPreset { get; set; }
         public ObservableCollection<FieldVM> FieldViewModels { get; } = new();
 
-        // Commands
         public ICommand CmdAddFiles { get; }
         public ICommand CmdRemoveSelected { get; }
         public ICommand CmdClear { get; }
@@ -82,38 +78,34 @@ namespace MediaMetadataEditor.Core
         public ICommand CmdOpenCapability { get; }
         public ICommand CmdToggleShowHidden { get; }
         public ICommand CmdRestoreFromBackup { get; }
+        public ICommand CmdOpenLogs { get; }
 
-        // options/state
-        bool _createBackup = SettingsSvc.CreateBackup; public bool CreateBackup { get => _createBackup; set => SetProperty(ref _createBackup, value); }
-        bool _allowExperimental = false; public bool AllowExperimental { get => _allowExperimental; set => SetProperty(ref _allowExperimental, value); }
-        bool _showHiddenFields = false; public bool ShowHiddenFields { get => _showHiddenFields; set => SetProperty(ref _showHiddenFields, value); }
-        string _status = "Ready"; public string StatusText { get => _status; set => SetProperty(ref _status, value); }
+        bool _showHidden = false; public bool ShowHiddenFields { get => _showHidden; set { SetProperty(ref _showHidden, value); UpdateFieldSupport(); } }
+        string _status = "Pronto"; public string StatusText { get => _status; set => SetProperty(ref _status, value); }
 
         bool isDark = false;
 
         public MainViewModel()
         {
-            // fields
             var keys = new[] {
-                ("Title","Title"),
-                ("Comment","Description / Comment"),
-                ("Artist","Artist / Performer"),
-                ("Genre","Genre"),
-                ("Year","Year"),
-                ("Director","Director"),
-                ("Producer","Producer"),
-                ("Writer","Writer"),
-                ("Provider","Provider"),
-                ("EncodedBy","Encoded by"),
+                ("Title","Título"),
+                ("Comment","Descrição / Comentário"),
+                ("Artist","Artista / Interprete"),
+                ("Genre","Gênero"),
+                ("Year","Ano"),
+                ("Director","Diretor"),
+                ("Producer","Produtor"),
+                ("Writer","Roteirista"),
+                ("Provider","Fornecedor"),
+                ("EncodedBy","Codificado por"),
                 ("Copyright","Copyright"),
-                ("AuthorUrl","Author URL"),
-                ("CustomURL","Custom URL")
+                ("AuthorUrl","URL do Autor"),
+                ("CustomURL","URL Customizada")
             };
             foreach (var (k, label) in keys) FieldViewModels.Add(new FieldVM { Key = k, DisplayName = label });
 
             foreach (var p in PresetSvc.GetAll()) Presets.Add(p);
 
-            // commands
             CmdAddFiles = new RelayCommand(_ => AddFilesDialog());
             CmdRemoveSelected = new RelayCommand(_ => RemoveSelected());
             CmdClear = new RelayCommand(_ => ClearAll());
@@ -128,12 +120,12 @@ namespace MediaMetadataEditor.Core
             CmdOpenCapability = new RelayCommand(_ => OpenCapability());
             CmdToggleShowHidden = new RelayCommand(_ => UpdateFieldSupport());
             CmdRestoreFromBackup = new RelayCommand(_ => RestoreBackupDialog());
+            CmdOpenLogs = new RelayCommand(_ => OpenLogs());
         }
 
-        // UI actions
         public void AddFilesDialog()
         {
-            var ofd = new OpenFileDialog { Multiselect = true, Filter = "Video files|*.mp4;*.m4v;*.mov;*.wmv;*.mkv;*.avi;*.flv|All|*.*" };
+            var ofd = new OpenFileDialog { Multiselect = true, Filter = "Arquivos de vídeo|*.mp4;*.m4v;*.mov;*.wmv;*.mkv;*.avi;*.flv|Todos|*.*" };
             if (ofd.ShowDialog() == true) AddFiles(ofd.FileNames);
         }
 
@@ -153,16 +145,17 @@ namespace MediaMetadataEditor.Core
                 }
                 catch { }
             }
-            StatusText = $"{Files.Count} files loaded";
+            StatusText = $"{Files.Count} arquivos carregados";
             UpdateFieldSupport();
         }
 
         public void RemoveSelected()
         {
-            var arr = SelectedFiles.ToArray();
-            foreach (var f in arr) Files.Remove(f);
+            var toRemove = SelectedFiles.OfType<FileItem>().ToArray();
+            foreach (var f in toRemove) Files.Remove(f);
             SelectedFiles.Clear();
             UpdateFieldSupport();
+            StatusText = "Removidos seleção.";
         }
 
         public void ClearAll()
@@ -170,6 +163,7 @@ namespace MediaMetadataEditor.Core
             Files.Clear();
             SelectedFiles.Clear();
             UpdateFieldSupport();
+            StatusText = "Lista limpa.";
         }
 
         public void Dedupe()
@@ -178,47 +172,60 @@ namespace MediaMetadataEditor.Core
             Files.Clear();
             foreach (var u in unique) Files.Add(u);
             UpdateFieldSupport();
+            StatusText = "Duplicatas removidas.";
         }
 
         public void PreviewSelected()
         {
-            var t = SelectedFiles.FirstOrDefault() ?? Files.FirstOrDefault();
-            if (t == null) { MessageBox.Show("No file selected."); return; }
-            var tags = TagLibSvc.ReadTags(t.FullPath);
+            var first = SelectedFiles.OfType<FileItem>().FirstOrDefault() ?? Files.FirstOrDefault();
+            if (first == null) { MessageBox.Show("Selecione um arquivo."); return; }
+            var tags = TagLibSvc.ReadTags(first.FullPath);
             var sb = new StringBuilder();
-            sb.AppendLine($"File: {t.FileName}");
+            sb.AppendLine($"Arquivo: {first.FileName}");
             foreach (var kv in tags) sb.AppendLine($"{kv.Key}: {kv.Value}");
-            MessageBox.Show(sb.ToString(), "Preview");
+            MessageBox.Show(sb.ToString(), "Pré-visualização");
+        }
+
+        private async Task<string> WriteLogAndReturnPathAsync(object entry)
+        {
+            await LoggerSvc.AppendOperationAsync(entry);
+            return SettingsSvc.OperationsLog;
         }
 
         public async Task ApplyAsync()
         {
-            var targets = SelectedFiles.Any() ? SelectedFiles.ToArray() : Files.ToArray();
-            if (!targets.Any()) { MessageBox.Show("No files selected."); return; }
-            if (MessageBox.Show($"Apply to {targets.Length} files? Continue?", "Confirm", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+            var targets = SelectedFiles.OfType<FileItem>().Any() ? SelectedFiles.OfType<FileItem>().ToArray() : Files.ToArray();
+            if (!targets.Any()) { MessageBox.Show("Nenhum arquivo selecionado."); return; }
+            if (MessageBox.Show($"Aplicar a {targets.Length} arquivo(s)?", "Confirmar", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
 
             var values = FieldViewModels.Where(f => f.IsChecked).ToDictionary(f => f.Key, f => f.Value ?? string.Empty, StringComparer.OrdinalIgnoreCase);
-            var report = new List<FileReport>();
-            StatusText = "Processing...";
+            StatusText = "Processando...";
+            var overall = new List<object>();
 
             foreach (var file in targets)
             {
-                var fr = new FileReport { FilePath = file.FullPath };
+                var oldTags = TagLibSvc.ReadTags(file.FullPath);
+                var entry = new
+                {
+                    timestamp = DateTime.UtcNow,
+                    file = file.FullPath,
+                    attempt = new Dictionary<string, object>(),
+                };
                 try
                 {
-                    if (CreateBackup)
+                    var ok = TagLibSvc.TryWriteBasic(file.FullPath, values, out var msg);
+                    if (ok)
                     {
-                        var bak = file.FullPath + ".bak_mme";
-                        if (!File.Exists(bak)) File.Copy(file.FullPath, bak);
-                    }
-
-                    if (TagLibSvc.TryWriteBasic(file.FullPath, values, out var msg))
-                    {
-                        fr.Fields["Write"] = new FieldResult { Field = "Write", Status = FieldStatus.Success, Message = "TagLib" };
+                        entry.attempt["method"] = "TagLib";
+                        entry.attempt["result"] = "success";
+                        entry.attempt["message"] = msg;
                     }
                     else
                     {
-                        var msgs = new List<string>(); bool wrote = false;
+                        entry.attempt["method"] = "TagLib_Failed";
+                        entry.attempt["message"] = msg;
+                        var msgs = new List<string>();
+                        bool wrote = false;
                         if (values.TryGetValue("Title", out var title) && !string.IsNullOrWhiteSpace(title))
                         {
                             var a = ExternalToolsSvc.TryWriteWithAtomicParsley(file.FullPath, "title", title);
@@ -239,42 +246,51 @@ namespace MediaMetadataEditor.Core
                                 if (e.Success) wrote = true; else msgs.Add("Exif:" + e.Error);
                             }
                         }
-
-                        fr.Fields["Write"] = wrote ? new FieldResult { Field = "Write", Status = FieldStatus.Success, Message = "External" } :
-                                                     new FieldResult { Field = "Write", Status = FieldStatus.Partial, Message = string.Join("; ", msgs) };
+                        entry.attempt["fallbacks"] = msgs;
+                        entry.attempt["result"] = wrote ? "success_with_external" : "partial_or_failed";
                     }
                 }
                 catch (Exception ex)
                 {
-                    fr.Fields["Write"] = new FieldResult { Field = "Write", Status = FieldStatus.Failed, Message = ex.Message };
+                    entry.attempt["method"] = "Exception";
+                    entry.attempt["result"] = "failed";
+                    entry.attempt["message"] = ex.Message;
                 }
-                report.Add(fr);
+
+                var afterTags = TagLibSvc.ReadTags(file.FullPath);
+                var logEntry = new
+                {
+                    timestamp = DateTime.UtcNow,
+                    file = file.FullPath,
+                    before = oldTags,
+                    after = afterTags,
+                    attempt = entry.attempt
+                };
+                await WriteLogAndReturnPathAsync(logEntry);
+                overall.Add(logEntry);
             }
 
-            var baseDir = AppDomain.CurrentDomain.BaseDirectory ?? Environment.CurrentDirectory;
-            var outp = Path.Combine(baseDir, $"apply_report_{DateTime.Now:yyyyMMddHHmmss}.json");
-            await File.WriteAllTextAsync(outp, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
-            MessageBox.Show($"Done. Report: {outp}");
-            StatusText = "Ready";
+            var reportPath = SettingsSvc.OperationsLog;
+            MessageBox.Show($"Operação finalizada. Relatório de operações em: {reportPath}", "Concluído");
+            StatusText = "Pronto";
         }
 
         public async Task RemoveSubstringAsync()
         {
-            var dlg = new Views.PromptWindow("Substring to remove:", "Remove substring");
+            var dlg = new Views.PromptWindow("Substring a remover:", "Remover substring", "");
             if (dlg.ShowDialog() != true) return;
             var sub = dlg.Result ?? "";
             if (string.IsNullOrEmpty(sub)) return;
 
             var field = FieldViewModels.FirstOrDefault(f => f.IsChecked)?.Key ?? "Title";
-            var targets = SelectedFiles.Any() ? SelectedFiles : Files;
-            var logs = new List<string>();
-
+            var targets = SelectedFiles.OfType<FileItem>().Any() ? SelectedFiles.OfType<FileItem>() : Files;
+            var logs = new List<object>();
             foreach (var file in targets)
             {
                 try
                 {
                     using var tf = TagLibSvc.SafeOpen(file.FullPath);
-                    if (tf == null) { logs.Add($"{file.FullPath},NO_TAG"); continue; }
+                    if (tf == null) { logs.Add(new { file = file.FullPath, result = "no_tag" }); continue; }
                     var tag = tf.Tag;
                     string oldv = "", newv = "";
                     switch (field)
@@ -284,20 +300,25 @@ namespace MediaMetadataEditor.Core
                         case "Artist": var arr = tag.Performers ?? Array.Empty<string>(); var arr2 = arr.Select(a => a.Replace(sub, "", StringComparison.OrdinalIgnoreCase)).ToArray(); oldv = string.Join("|", arr); newv = string.Join("|", arr2); tag.Performers = arr2; break;
                         case "Genre": var g = tag.Genres ?? Array.Empty<string>(); var g2 = g.Select(a => a.Replace(sub, "", StringComparison.OrdinalIgnoreCase)).ToArray(); oldv = string.Join("|", g); newv = string.Join("|", g2); tag.Genres = g2; break;
                     }
-                    tf.Save(); logs.Add($"{file.FullPath},OK,{field},{oldv}->{newv}");
+                    tf.Save();
+                    var after = TagLibSvc.ReadTags(file.FullPath);
+                    var log = new { timestamp = DateTime.UtcNow, file = file.FullPath, field = field, before = oldv, after = newv, afterTags = after, result = "ok" };
+                    logs.Add(log);
+                    await LoggerSvc.AppendOperationAsync(log);
                 }
-                catch (Exception ex) { logs.Add($"{file.FullPath},ERR,{ex.Message}"); }
+                catch (Exception ex)
+                {
+                    var log = new { timestamp = DateTime.UtcNow, file = file.FullPath, field = field, error = ex.Message, result = "error" };
+                    logs.Add(log);
+                    await LoggerSvc.AppendOperationAsync(log);
+                }
             }
-
-            var baseDir = AppDomain.CurrentDomain.BaseDirectory ?? Environment.CurrentDirectory;
-            var outlog = Path.Combine(baseDir, $"remove_{DateTime.Now:yyyyMMddHHmmss}.log");
-            await File.WriteAllLinesAsync(outlog, logs);
-            MessageBox.Show($"Done. Log: {outlog}");
+            MessageBox.Show($"Operação concluída. Logs adicionados em: {SettingsSvc.OperationsLog}", "Concluído");
         }
 
         public void SavePreset()
         {
-            var dlg = new Views.PromptWindow("Preset name:", "Save preset", "MyPreset");
+            var dlg = new Views.PromptWindow("Nome do preset:", "Salvar preset", "MeuPreset");
             if (dlg.ShowDialog() != true) return;
             var name = dlg.Result ?? ""; if (string.IsNullOrWhiteSpace(name)) return;
             var p = new Preset { Name = name };
@@ -305,16 +326,16 @@ namespace MediaMetadataEditor.Core
             foreach (var f in FieldViewModels.Where(x => x.IsChecked)) p.CheckedFields.Add(f.Key);
             PresetSvc.AddOrReplace(p);
             Presets.Clear(); foreach (var pp in PresetSvc.GetAll()) Presets.Add(pp);
-            MessageBox.Show("Preset saved.");
+            MessageBox.Show("Preset salvo.");
         }
 
         public void DeletePreset()
         {
-            if (SelectedPreset == null) { MessageBox.Show("Select preset."); return; }
+            if (SelectedPreset == null) { MessageBox.Show("Selecione um preset."); return; }
             PresetSvc.Remove(SelectedPreset.Name); Presets.Remove(SelectedPreset); SelectedPreset = null;
         }
 
-        public void ExportReport() => MessageBox.Show("Reports are in app folder after apply.");
+        public void ExportReport() => MessageBox.Show($"Os logs de operações estão em: {SettingsSvc.OperationsLog}");
 
         public void ToggleTheme()
         {
@@ -322,9 +343,9 @@ namespace MediaMetadataEditor.Core
             try
             {
                 var dict = new ResourceDictionary();
-                var basePath = AppDomain.CurrentDomain.BaseDirectory ?? Environment.CurrentDirectory;
+                var basePath = SettingsSvc.AppFolder;
                 var resPath = Path.Combine(basePath, "Resources", isDark ? "Dark.xaml" : "Light.xaml");
-                dict.Source = File.Exists(resPath) ? new Uri(resPath, UriKind.Absolute) : new Uri($"/Resources/{(isDark ? "Dark.xaml" : "Light.xaml")}", UriKind.Relative);
+                dict.Source = new Uri(resPath, UriKind.Absolute);
                 Application.Current.Resources.MergedDictionaries.Clear();
                 Application.Current.Resources.MergedDictionaries.Add(dict);
             }
@@ -333,16 +354,8 @@ namespace MediaMetadataEditor.Core
 
         public void OpenCapability()
         {
-            var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory ?? Environment.CurrentDirectory, "capability_matrix.json");
-            try
-            {
-                var psi = new ProcessStartInfo { FileName = path, UseShellExecute = true };
-                Process.Start(psi);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Cannot open capability file: " + ex.Message);
-            }
+            var path = Path.Combine(SettingsSvc.AppFolder, "capability_matrix.json");
+            try { Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true }); } catch { MessageBox.Show("Não foi possível abrir capability_matrix.json."); }
         }
 
         public void UpdateFieldSupport()
@@ -356,29 +369,27 @@ namespace MediaMetadataEditor.Core
                     var support = CapabilitySvc.GetSupport(f.Extension, fvm.Key);
                     if (support != CapabilitySupport.Unsupported) supported++;
                 }
-                if (total == 0) { fvm.IsEnabled = true; fvm.Tooltip = "No files"; }
-                else if (supported == 0) { fvm.IsEnabled = ShowHiddenFields; fvm.Tooltip = ShowHiddenFields ? $"Supported 0/{total}" : "Hidden"; }
-                else if (supported < total) { fvm.IsEnabled = true; fvm.Tooltip = $"Supported {supported}/{total}"; }
-                else { fvm.IsEnabled = true; fvm.Tooltip = "Supported in all"; }
+                if (total == 0) { fvm.IsEnabled = true; fvm.Tooltip = "Sem arquivos"; }
+                else if (supported == 0) { fvm.IsEnabled = ShowHiddenFields; fvm.Tooltip = ShowHiddenFields ? $"Suportado 0/{total}" : "Oculto"; }
+                else if (supported < total) { fvm.IsEnabled = true; fvm.Tooltip = $"Suportado {supported}/{total}"; }
+                else { fvm.IsEnabled = true; fvm.Tooltip = "Suportado em todos"; }
             }
             OnPropertyChanged(nameof(FieldViewModels));
         }
 
         public void RestoreBackupDialog()
         {
-            var dlg = new OpenFileDialog { Filter = "Backup files|*.bak_mme|All|*.*" };
-            if (dlg.ShowDialog() != true) return;
-            foreach (var bak in dlg.FileNames)
+            MessageBox.Show("Funcionalidade de restauração via backup desabilitada (não criamos .bak). Use operations_log.jsonl para auditoria.");
+        }
+
+        public void OpenLogs()
+        {
+            try
             {
-                try
-                {
-                    var orig = bak.EndsWith(".bak_mme") ? bak.Substring(0, bak.Length - ".bak_mme".Length) : null;
-                    if (orig == null) { MessageBox.Show("Invalid backup"); continue; }
-                    File.Copy(bak, orig, true);
-                }
-                catch (Exception ex) { MessageBox.Show("Restore failed: " + ex.Message); }
+                var p = SettingsSvc.OperationsLog;
+                Process.Start(new ProcessStartInfo { FileName = p, UseShellExecute = true });
             }
-            MessageBox.Show("Restore attempts finished.");
+            catch { MessageBox.Show("Não foi possível abrir logs."); }
         }
     }
 }
